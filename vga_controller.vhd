@@ -82,18 +82,22 @@ architecture controller of vga_controller is
 	signal colors:			std_logic_vector (7 downto 0);
 	
 	-- intermediate ram signals
-	signal addr			:	unsigned(5 downto 0);
-	signal ram_din		:	unsigned(15 downto 0);
-	signal wen			: 	std_logic;
-	signal ram_dout	:	unsigned(15 downto 0);
+	signal addr1		:	unsigned(5 downto 0);
+	signal ram_din1	:	unsigned(15 downto 0);
+	signal wen1			: 	std_logic;
+	signal ram_dout1	:	unsigned(15 downto 0);
+	signal addr2		:	unsigned(5 downto 0);
+	signal ram_din2	:	unsigned(15 downto 0);
+	signal wen2			: 	std_logic;
+	signal ram_dout2	:	unsigned(15 downto 0);
+	signal display1	:	std_logic;
+	signal display2	:	std_logic;
+	type adc_state is (INIT, ADC1, ADC2);
+	signal state_a 	: adc_state;
+	signal display 	: std_logic_vector(1 downto 0);
+	signal write_screen1 : std_logic;
+	signal write_screen2 : std_logic;
 	
-	-- fsm signals
-	type state_type is (INIT,DRAW,RAM_WRITE);
-	signal state : state_type;
-	signal d_addr : unsigned(5 downto 0);
-	signal w_addr : unsigned(5 downto 0);
-	signal display: std_logic;
-
 begin
 
 	-- map vga driver to top level signals
@@ -116,11 +120,17 @@ begin
 									 adc_clk  => adc_sck);
 	
 	-- map ram to top level signals
-	d3: dram port map (clk	=>	clk,
-							addr	=>	addr,
-							din	=>	ram_din,
-							wen	=>	wen,
-							dout	=>	ram_dout);
+	r1: dram port map (clk	=>	clk,
+							addr	=>	addr1,
+							din	=>	ram_din1,
+							wen	=>	wen1,
+							dout	=>	ram_dout1);
+							
+	r2: dram port map (clk	=>	clk,
+							addr	=>	addr2,
+							din	=>	ram_din2,
+							wen	=>	wen2,
+							dout	=>	ram_dout2);
 							
 	-- edge detection for adc trigger
 	process(clk)
@@ -134,6 +144,7 @@ begin
 	-- adc conversion
 	trigger <= (not trigger_tick) and adc_count(7);
 	
+	-- generate color bar
 	process(clk)
 	begin
 		if clk'event and clk = '1' then
@@ -143,61 +154,83 @@ begin
 		end if;
 	end process;
 	
-	-- synchronous state machine
-	state_machine: process(clk)
+	-- ADC process
+	process(clk)
 	begin
 		if clk'event and clk = '1' then
-			case state is
-				-- INIT state when button is pressed
+			case state_a is
 				when INIT =>
-					d_addr <= (others => '0');
-					w_addr <= (others => '0');
-					display <= '1';
-					wen <= '0';
-					addr <= d_addr;
-					state <= DRAW;	
-				-- draws data on screen with io(18)
-				when DRAW =>
-					d_addr <= h_count(8 downto 3);
-					addr <= d_addr;
-					if outval = '1' then
-						display <= '0';
-						wen <= '1';
-						addr <= w_addr;
-						state <= RAM_WRITE;
+					wen1 <= '0';
+					wen2 <= '0';
+					display1 <= '0';
+					display2 <= '1';
+					addr1 <= (others => '0');
+					addr2 <= (others => '0');
+					state_a <= ADC1;
+				when ADC1 =>
+					addr2 <= h_count(8 downto 3);
+					if addr1 < 63 and outval = '1' then
+						addr1 <= addr1 + 1;
+						wen1 <= '1';
+						state_a <= ADC1;
+					elsif addr1 < 63 and outval = '0' then
+						wen1 <= '0';
+						state_a <= ADC1;
 					else
-						wen <= '0';
-						state <= DRAW;
+						wen1 <= '0';
+						wen2 <= '0';
+						display1 <= '1';
+						display2 <= '0';
+						addr1 <= (others => '0');
+						addr2 <= (others => '0');
+						state_a <= ADC2;
 					end if;
-				-- RAM_WRITE steps through ram and writes value of adc conversion when adc is sampled
-				when RAM_WRITE =>
-					if w_addr < 63 then
-						w_addr <= w_addr + 1;
+				when ADC2 =>
+					addr1 <= h_count(8 downto 3);
+					if addr2 < 63 and outval = '1' then
+						addr2 <= addr2 + 1;
+						wen2 <= '1';
+						state_a <= ADC2;
+					elsif addr2 < 63 and outval = '0' then
+						wen2 <= '0';
+						state_a <= ADC2;
 					else
-						w_addr <= (others => '0');
+						wen1 <= '0';
+						wen2 <= '0';
+						display1 <= '0';
+						display2 <= '1';
+						addr1 <= (others => '0');
+						addr2 <= (others => '0');
+						state_a <= ADC1;
 					end if;
-					display <= '1';
-					addr <= d_addr;
-					wen <= '0';
-					state <= DRAW;
-				when others => -- the catch-all condition
-					state <= INIT; 
 			end case;
 		end if;
-	end process state_machine;
+	end process;
 	
 	io(6) <= h_sync;
 	io(7) <= v_sync;
 	
 	-- write ram data
-	ram_din <= unsigned("000000" & dout);
+	ram_din1 <= unsigned("000000" & dout);
+	ram_din2 <= unsigned("000000" & dout);
+
+	-- display ram data through mux
+	display <= display2 & display1;
+	write_screen1 <= '1' when unsigned(ram_dout1) > v_count
+								and  video_on = '1'
+								and  h_count < 512
+								else '0';
+								
+	write_screen2 <= '1' when unsigned(ram_dout2) > v_count
+								and  video_on = '1'
+								and  h_count < 512
+								else '0';							
 	
-	-- display ram data
-	io(18) <= '1' when display = '1'
-					  and  unsigned(ram_dout) > v_count 
-					  and  video_on = '1'
-					  and  h_count < 512  
-					  else '0';
+	
+	with display select
+	io(18) <= write_screen1 when "01",
+				 write_screen2 when "10",
+			    '0'				when others;
 	
 	
 	-- bar of color
