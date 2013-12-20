@@ -160,8 +160,6 @@ begin
 		if clk'event and clk = '1' then
 			case state_a is
 				when INIT =>
-					wen1 <= '0';
-					wen2 <= '0';
 					display1 <= '0';
 					display2 <= '1';
 					addr1 <= (others => '0');
@@ -171,14 +169,10 @@ begin
 					addr2 <= h_count(8 downto 3);
 					if addr1 < 63 and outval = '1' then
 						addr1 <= addr1 + 1;
-						wen1 <= '1';
 						state_a <= ADC1;
 					elsif addr1 < 63 and outval = '0' then
-						wen1 <= '0';
 						state_a <= ADC1;
 					else
-						wen1 <= '0';
-						wen2 <= '0';
 						display1 <= '1';
 						display2 <= '0';
 						addr1 <= (others => '0');
@@ -189,14 +183,10 @@ begin
 					addr1 <= h_count(8 downto 3);
 					if addr2 < 63 and outval = '1' then
 						addr2 <= addr2 + 1;
-						wen2 <= '1';
 						state_a <= ADC2;
 					elsif addr2 < 63 and outval = '0' then
-						wen2 <= '0';
 						state_a <= ADC2;
 					else
-						wen1 <= '0';
-						wen2 <= '0';
 						display1 <= '0';
 						display2 <= '1';
 						addr1 <= (others => '0');
@@ -211,6 +201,9 @@ begin
 	io(7) <= v_sync;
 	
 	-- write ram data
+	wen1 <= outval when state_a = ADC1 else '0';
+	wen2 <= outval when state_a = ADC2 else '0';
+	
 	ram_din1 <= unsigned("000000" & dout);
 	ram_din2 <= unsigned("000000" & dout);
 
